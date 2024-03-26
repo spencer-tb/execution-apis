@@ -220,11 +220,13 @@ The payload build process is specified as follows:
 
 7. Client software **MUST** process provided `payloadAttributes` after successfully applying the `forkchoiceState` and only if the payload referenced by `forkchoiceState.headBlockHash` is `VALID`. The processing flow is as follows:
 
-    1. Verify that `payloadAttributes.timestamp` is greater than `timestamp` of a block referenced by `forkchoiceState.headBlockHash` and return `-38003: Invalid payload attributes` on failure.
+    1. Verify that `payloadAttributes` matches the [`PayloadAttributesV1`](#payloadattributesv1) structure, return `-38003: Invalid payload attributes` on failure.
 
-    2. If `payloadAttributes` passes all valdiation steps, begin a payload build process building on top of `forkchoiceState.headBlockHash` and identified via `buildProcessId` value. The build process is specified in the [Payload building](#payload-building) section.
+    2. Verify that `payloadAttributes.timestamp` is greater than `timestamp` of a block referenced by `forkchoiceState.headBlockHash` and return `-38003: Invalid payload attributes` on failure.
 
-    3. If `payloadAttributes` validation fails, the `forkchoiceState` update **MUST NOT** be rolled back.
+    3. If `payloadAttributes` passes all validation steps, begin a payload build process building on top of `forkchoiceState.headBlockHash` and identified via `buildProcessId` value. The build process is specified in the [Payload building](#payload-building) section.
+
+    4. If `payloadAttributes` validation fails, the `forkchoiceState` update **MUST NOT** be rolled back.
 
 8. Client software **MUST** respond to this method call in the following way:
   * `{payloadStatus: {status: SYNCING, latestValidHash: null, validationError: null}, payloadId: null}` if `forkchoiceState.headBlockHash` references an unknown payload or a payload that can't be validated because requisite data for the validation is missing
