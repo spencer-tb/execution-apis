@@ -61,10 +61,11 @@
     fail solely because the sender cannot afford the gas fees implied by those client-selected
     defaults. This does not waive balance requirements for a non-zero transaction `value`.
 
-    The highest gas limit the search considers is the `gas` of the request when it is set, and
-    otherwise an implementation-defined default that is at least the gas limit of the block it
-    executes on. It is then lowered to what the sender's balance can pay at the request's fee,
-    and to the client's own limit. Clients MAY limit the gas of other calls, but that limit MUST
+    The highest gas limit the search considers is the `gas` of the request when it is at least
+    21000, and otherwise the gas limit of the block it executes on. It is then lowered to the
+    transaction gas limit cap of the fork (`TX_MAX_GAS_LIMIT` from Osaka, `TX_MAX_TOTAL_GAS_LIMIT`,
+    2^32 - 1, from Amsterdam), to what the sender's balance can pay at the request's fee, and to
+    the client's own limit. Clients MAY limit the gas of other calls, but that limit MUST
     NOT be below the gas limit of the block, so the search can always reach it. A block override
     of the gas limit MUST NOT raise the limit.
 
