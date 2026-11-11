@@ -1186,6 +1186,20 @@ See https://github.com/ethereum/hive/tree/master/cmd/hivechain/contracts/callenv
 				return nil
 			},
 		},
+		{
+			Name:  "call-gas-above-rpc-cap",
+			About: "performs a contract-creation call with more gas than common RPC gas caps (50M) but less than the block gas limit; the init code returns the gas left at entry, so the call must not be capped below the block gas limit",
+			Run: func(ctx context.Context, t *T) error {
+				return callGasAtEntry(ctx, t, 60_000_000, 50_000_000)
+			},
+		},
+		{
+			Name:  "call-execution-above-tx-gas-cap",
+			About: "performs a contract-creation call with more than TX_MAX_GAS_LIMIT (2^24) gas; the init code returns the gas left at entry, which must exceed 2^24 since eth_call does not cap execution gas",
+			Run: func(ctx context.Context, t *T) error {
+				return callGasAtEntry(ctx, t, 20_000_000, 1<<24)
+			},
+		},
 	},
 }
 
@@ -1194,6 +1208,83 @@ if (BigInt(messages[1].response.result) <= 5000) {
     throw new Error("invalid gas estimation result");
 }
 `
+
+// gasAtEntryInitCode returns the gas left at entry as 32 bytes:
+// GAS PUSH0 MSTORE PUSH1 32 PUSH0 RETURN.
+var gasAtEntryInitCode = hexutil.Bytes(common.FromHex("0x5a5f5260205ff3"))
+
+// twoMaxSizeCreations creates two contracts of 24,576 zero bytes each. Their
+// code deposit needs more gas than common RPC gas caps (50M):
+//
+//	PUSH6 child PUSH1 0 MSTORE (PUSH1 6 PUSH1 26 PUSH1 0 CREATE POP) x2 STOP
+//
+// where child is PUSH2 0x6000 PUSH1 0 RETURN.
+var twoMaxSizeCreations = common.FromHex("0x656160006000f36000526006601a6000f0506006601a6000f05000")
+
+var estimateAboveCapScript = `
+const gas = BigInt(messages[1].response.result);
+if (gas <= 50000000n || gas > 200000000n) {
+    throw new Error("estimate must be above 50M and at most the block gas limit");
+}
+`
+
+// callGasAtEntry performs eth_call of gasAtEntryInitCode with the given gas
+// and checks that the gas left at entry is above min.
+func callGasAtEntry(ctx context.Context, t *T, gas, min uint64) error {
+	msg := map[string]any{
+		"from":  common.Address{1, 2, 3},
+		"input": gasAtEntryInitCode,
+		"gas":   hexutil.Uint64(gas),
+	}
+	var result hexutil.Bytes
+	if err := t.rpc.CallContext(ctx, &result, "eth_call", msg, "latest"); err != nil {
+		return err
+	}
+	if left := new(big.Int).SetBytes(result); !left.IsUint64() || left.Uint64() <= min {
+		return fmt.Errorf("gas left at entry %v, want more than %d", left, min)
+	}
+	return nil
+}
+
+// simulateGasAtEntry simulates gasAtEntryInitCode with 20M gas, with or
+// without validation, and checks the gas left at entry against 2^24.
+func simulateGasAtEntry(ctx context.Context, t *T, validation bool) error {
+	sender := common.Address{0xc0}
+	call := map[string]any{
+		"from":         sender,
+		"input":        gasAtEntryInitCode,
+		"gas":          hexutil.Uint64(20_000_000),
+		"maxFeePerGas": hexutil.Uint64(0),
+	}
+	params := map[string]any{
+		"blockStateCalls": []any{map[string]any{
+			"blockOverrides": map[string]any{"baseFeePerGas": hexutil.Uint64(0)},
+			"stateOverrides": map[string]any{sender.Hex(): map[string]any{"balance": hexutil.Uint64(1_000_000_000)}},
+			"calls":          []any{call},
+		}},
+		"validation": validation,
+	}
+	var result []struct {
+		Calls []struct {
+			ReturnData hexutil.Bytes  `json:"returnData"`
+			Status     hexutil.Uint64 `json:"status"`
+		} `json:"calls"`
+	}
+	if err := t.rpc.CallContext(ctx, &result, "eth_simulateV1", params, "latest"); err != nil {
+		return err
+	}
+	if len(result) != 1 || len(result[0].Calls) != 1 || result[0].Calls[0].Status != 1 {
+		return fmt.Errorf("unexpected simulation result: %+v", result)
+	}
+	left := new(big.Int).SetBytes(result[0].Calls[0].ReturnData).Uint64()
+	if validation && left >= 1<<24 {
+		return fmt.Errorf("with validation, gas left at entry %d, want below 2^24", left)
+	}
+	if !validation && left <= 1<<24 {
+		return fmt.Errorf("without validation, gas left at entry %d, want above 2^24", left)
+	}
+	return nil
+}
 
 // EthEstimateGas stores a list of all tests against the method.
 var EthEstimateGas = MethodTests{
@@ -1389,6 +1480,23 @@ The request must not fail merely because the sender cannot afford the client's f
 				}
 				if gas < 21000 {
 					return fmt.Errorf("expected blob tx to require more than base gas, got %d", gas)
+				}
+				return nil
+			},
+		},
+		{
+			Name:     "estimate-above-rpc-cap",
+			About:    "estimates a contract creation that deploys two maximum-size contracts and needs more gas than common RPC gas caps (50M) but less than the block gas limit",
+			SpecOnly: true, // EVM gas estimation is not required to be identical across clients
+			Run: func(ctx context.Context, t *T) error {
+				t.SetValidationScript(estimateAboveCapScript)
+				msg := ethereum.CallMsg{From: common.Address{1, 2, 3}, Data: twoMaxSizeCreations}
+				got, err := t.eth.EstimateGas(ctx, msg)
+				if err != nil {
+					return err
+				}
+				if got <= 50_000_000 {
+					return fmt.Errorf("estimate %d does not need more than 50M gas", got)
 				}
 				return nil
 			},
@@ -7704,6 +7812,20 @@ var EthSimulateV1 = MethodTests{
 					return fmt.Errorf("expected error for difficulty override after the merge")
 				}
 				return nil
+			},
+		},
+		{
+			Name:  "ethSimulate-execution-gas-with-validation",
+			About: "simulates a contract creation with more than TX_MAX_GAS_LIMIT (2^24) gas and validation; the init code returns the gas left at entry, which must be capped as in a transaction",
+			Run: func(ctx context.Context, t *T) error {
+				return simulateGasAtEntry(ctx, t, true)
+			},
+		},
+		{
+			Name:  "ethSimulate-execution-gas-without-validation",
+			About: "simulates a contract creation with more than TX_MAX_GAS_LIMIT (2^24) gas and no validation; the init code returns the gas left at entry, which must exceed 2^24 as in eth_call",
+			Run: func(ctx context.Context, t *T) error {
+				return simulateGasAtEntry(ctx, t, false)
 			},
 		},
 	},

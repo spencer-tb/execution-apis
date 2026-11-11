@@ -7,6 +7,17 @@
     client MAY select implementation-defined fee values for the simulation. The request MUST NOT
     fail solely because the sender cannot afford the gas fees implied by those client-selected
     defaults. This does not waive balance requirements for a non-zero transaction `value`.
+
+    Clients MAY limit the gas of a call to protect themselves, but a call that sets `gas` to at
+    most the gas limit of the block it executes on MUST NOT be limited below that value. When
+    `gas` is omitted, the default is implementation-defined. A block override of the gas limit
+    MUST NOT raise the limit.
+
+    From the Amsterdam fork (EIP-8037), all of the call's gas is available as execution gas:
+    the `TX_MAX_GAS_LIMIT` (2^24, EIP-7825) cap on execution gas and on intrinsic gas does not
+    apply, and neither does the `TX_MAX_TOTAL_GAS_LIMIT` (2^32 - 1) cap on the gas limit, so
+    read-only calls that need more execution than a transaction can have keep working. To preview a transaction exactly as it executes in a block, use `eth_simulateV1`
+    with `validation` set to true.
   params:
     - name: Transaction
       required: true
@@ -49,6 +60,19 @@
     client MAY select implementation-defined fee values for the simulation. The request MUST NOT
     fail solely because the sender cannot afford the gas fees implied by those client-selected
     defaults. This does not waive balance requirements for a non-zero transaction `value`.
+
+    The highest gas limit the search considers is the `gas` of the request when it is at least
+    the lowest cost of any transaction on the fork (21000, or `TX_BASE_COST`, 12000, from
+    Amsterdam, EIP-2780), and otherwise the gas limit of the block it executes on. It is then lowered to the
+    transaction gas limit cap of the fork (`TX_MAX_GAS_LIMIT` from Osaka, `TX_MAX_TOTAL_GAS_LIMIT`,
+    2^32 - 1, from Amsterdam), to what the sender's balance can pay at the request's fee, and to
+    the client's own limit. Clients MAY limit the gas of other calls, but that limit MUST
+    NOT be below the gas limit of the block, so the search can always reach it. A block override
+    of the gas limit MUST NOT raise the limit.
+
+    From the Amsterdam fork (EIP-8037), the transaction is executed as in a block: its
+    execution gas is capped at `TX_MAX_GAS_LIMIT` (2^24, EIP-7825) minus its intrinsic gas,
+    and the rest of its gas funds the state gas reservoir.
   params:
     - name: Transaction
       required: true
@@ -136,6 +160,20 @@
 
 - name: eth_simulateV1
   summary: Executes a sequence of message calls building on each other's state without creating transactions on the block chain, optionally overriding block and state data
+  description: |
+    Executes a sequence of message calls building on each other's state without creating
+    transactions on the block chain, optionally overriding block and state data.
+
+    Clients MAY limit the total gas of the request to protect themselves, as the global gas
+    limit in the `eth_simulateV1` notes. For calls that set `gas`, that limit MUST NOT be below
+    the gas limit of the block the simulation builds on. Each call draws on what is left of it,
+    and a call that sets `gas` above what is left is limited to what is left rather than
+    rejected. When `gas` is omitted, the default is implementation-defined. A block override of
+    the gas limit MUST NOT raise the limit.
+
+    From the Amsterdam fork (EIP-8037), a call with `validation` set to true executes as a
+    transaction in a block, and a call with `validation` false behaves like `eth_call`, as
+    described in "Gas after Amsterdam" in the `eth_simulateV1` notes.
   params:
     - name: Payload
       required: true
