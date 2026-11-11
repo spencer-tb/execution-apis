@@ -62,7 +62,8 @@
     defaults. This does not waive balance requirements for a non-zero transaction `value`.
 
     The highest gas limit the search considers is the `gas` of the request when it is at least
-    21000, and otherwise the gas limit of the block it executes on. It is then lowered to the
+    the lowest cost of any transaction on the fork (21000, or `TX_BASE_COST`, 12000, from
+    Amsterdam, EIP-2780), and otherwise the gas limit of the block it executes on. It is then lowered to the
     transaction gas limit cap of the fork (`TX_MAX_GAS_LIMIT` from Osaka, `TX_MAX_TOTAL_GAS_LIMIT`,
     2^32 - 1, from Amsterdam), to what the sender's balance can pay at the request's fee, and to
     the client's own limit. Clients MAY limit the gas of other calls, but that limit MUST
